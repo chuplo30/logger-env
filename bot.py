@@ -1,9 +1,11 @@
 import os
+import threading
 import discord
 from discord.ext import commands
 from lupa import LuaRuntime
 import traceback
 from datetime import datetime
+from flask import Flask
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 PREFIX = "!"
@@ -11,6 +13,16 @@ PREFIX = "!"
 intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix=PREFIX, intents=intents)
+
+# ====================== Flask keep-alive ======================
+app = Flask(__name__)
+
+@app.route("/")
+def home():
+    return "Bot is alive!", 200
+
+def run_flask():
+    app.run(host="0.0.0.0", port=10000)
 
 # ====================== Lupa Runtime + Hooks ======================
 
@@ -53,7 +65,7 @@ def create_hooked_runtime():
         lua.globals().getfenv = hooked_getfenv
         lua.globals().setfenv = hooked_setfenv
     except:
-        pass  # Luau / một số runtime không có
+        pass
 
     # === Hook _G / ENV dump ===
     def dump_env():
@@ -67,7 +79,7 @@ def create_hooked_runtime():
 
     lua.globals().dump_env = dump_env
 
-    # Fake một số Roblox function để script không crash ngay
+    # Fake Roblox env
     lua.execute("""
         game = {GetService = function() return {} end}
         workspace = {}
@@ -89,14 +101,12 @@ async def on_ready():
 async def run(ctx, *, code: str = None):
     """Chạy Lua code với hook"""
     if not code:
-        # Nếu reply message có code block
         if ctx.message.reference:
             ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
             code = ref.content
         else:
             return await ctx.send("Gửi code hoặc reply message chứa code")
 
-    # Lấy code trong ```lua ... ```
     if "```" in code:
         code = code.split("```")[1]
         if code.startswith("lua"):
@@ -109,7 +119,7 @@ async def run(ctx, *, code: str = None):
         lua, logs = create_hooked_runtime()
         result = lua.execute(code)
 
-        log_text = "\n".join(logs[-30:])  # lấy 30 dòng log gần nhất
+        log_text = "\n".join(logs[-30:])
         if len(log_text) > 1800:
             log_text = log_text[:1800] + "\n... (truncated)"
 
@@ -128,4 +138,12 @@ async def dump(ctx):
     log_text = "\n".join(logs)
     await ctx.send(f"```\n{log_text[:1900]}\n```")
 
-bot.run(TOKEN)
+# ====================== MAIN ======================
+
+if __name__ == "__main__":
+    # Chạy Flask trong thread riêng (daemon) để không block bot
+    threading.Thread(target=run_flask, daemon=True).start()
+    print("[FLASK] Listening on port 10000")
+
+    # Bot chạy ở main thread
+    bot.run(TOKEN)
