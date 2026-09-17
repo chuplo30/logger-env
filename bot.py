@@ -28,10 +28,10 @@ WORK.mkdir(parents=True, exist_ok=True)
 # ====================== BOT ======================
 intents = discord.Intents.default()
 intents.message_content = True
-intents.attachments = True
 bot = commands.Bot(command_prefix=PREFIX, intents=intents, help_command=None)
 
 _calls = defaultdict(list)
+
 
 def rate_ok(uid: int):
     now = datetime.now().timestamp()
@@ -43,15 +43,19 @@ def rate_ok(uid: int):
     _calls[uid] = keep
     return True, 0
 
+
 # ====================== HELPERS ======================
 CODE_BLOCK = re.compile(r"```(?:lua|luau)?\s*\n?(.*?)```", re.DOTALL | re.IGNORECASE)
+
 
 def extract_code(text: str):
     m = CODE_BLOCK.search(text or "")
     return m.group(1).encode("utf-8") if m else None
 
+
 JSON_BEGIN = "@@@LUNE_JSON_BEGIN@@@"
 JSON_END   = "@@@LUNE_JSON_END@@@"
+
 
 async def run_lune(inp: Path):
     cmd = [LUNE, "run", str(HOOK), str(inp)]
@@ -67,6 +71,7 @@ async def run_lune(inp: Path):
         await proc.wait()
         return None, None, "TIMEOUT"
 
+
 def parse_json(stdout: str):
     if not stdout:
         return None
@@ -78,34 +83,47 @@ def parse_json(stdout: str):
     except (ValueError, json.JSONDecodeError):
         return None
 
+
+TAG_MAP = {
+    "print": "🖨 ",
+    "warn":  "⚠️ ",
+    "loadstring": "📦 LOADSTRING",
+    "loadstring_code": "📜 CODE",
+    "loadstring_error": "❌ LOAD-ERR",
+    "getfenv": "🌐 GETFENV",
+    "setfenv": "🌐 SETFENV",
+    "HttpGet": "🌍 HTTP",
+    "HttpGetAsync": "🌍 HTTP",
+    "HttpPost": "🌍 HTTP",
+    "HttpPostAsync": "🌍 HTTP",
+    "GetService": "🔧 SVC",
+    "FindService": "🔧 SVC",
+    "require": "📎 require",
+    "task.wait": "⏱ wait",
+    "task.delay": "⏱ delay",
+    "writefile": "💾 WRITE",
+    "readfile": "📂 READ",
+    "appendfile": "💾 WRITE",
+    "loadfile": "📂 LOADFILE",
+    "queue_on_teleport": "🚀 TELEPORT",
+    "request": "🌍 REQ",
+    "setclipboard": "📋 CLIP",
+    "Drawing.new": "🎨 Draw",
+}
+
+
 def format_logs(logs, limit=3500):
     lines = []
     for entry in logs:
         kind = entry.get("kind", "?")
         msg  = entry.get("msg", "")
-        tag = {
-            "print": "🖨 ",
-            "warn":  "⚠️ ",
-            "loadstring": "📦 LOADSTRING",
-            "loadstring_code": "📜 CODE",
-            "loadstring_error": "❌ LOAD-ERR",
-            "getfenv": "🌐 GETFENV",
-            "setfenv": "🌐 SETFENV",
-            "HttpGet": "🌍 HTTP",
-            "HttpGetAsync": "🌍 HTTP",
-            "HttpPost": "🌍 HTTP",
-            "GetService": "🔧 SVC",
-            "require": "📎 require",
-            "task.wait": "⏱ wait",
-            "writefile": "💾 WRITE",
-            "readfile": "📂 READ",
-            "queue_on_teleport": "🚀 TELEPORT",
-        }.get(kind, f"[{kind}] ")
+        tag = TAG_MAP.get(kind, f"[{kind}] ")
         lines.append(f"{tag}{msg}")
     text = "\n".join(lines)
     if len(text) > limit:
         text = text[:limit] + "\n... (truncated)"
     return text or "(no logs)"
+
 
 # ====================== COMMANDS ======================
 @bot.event
@@ -114,6 +132,7 @@ async def on_ready():
     print(f"[FLASK] Listening on 0.0.0.0:{PORT}")
     print(f"[LUNE]  {LUNE}")
     print(f"[HOOK]  {HOOK}")
+    print(f"[WORK]  {WORK.resolve()}")
 
 
 @bot.command(name="run", aliases=["l", "r"])
@@ -138,6 +157,7 @@ async def cmd_run(ctx: commands.Context, *, args: str = ""):
             return await ctx.reply(f"❌ File quá lớn ({a.size} B).")
         src = await a.read()
         name = a.filename
+
     # 2) reply file/code
     elif ctx.message.reference:
         ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
@@ -149,7 +169,8 @@ async def cmd_run(ctx: commands.Context, *, args: str = ""):
             name = a.filename
         elif ref.content:
             src = extract_code(ref.content)
-    # 3) code block
+
+    # 3) code block trong args
     else:
         src = extract_code(args)
 
@@ -181,11 +202,10 @@ async def cmd_run(ctx: commands.Context, *, args: str = ""):
         tail = (so or "")[-1000:] + "\n---stderr---\n" + (se or "")[-600:]
         return await status.edit(content=f"❌ Không parse được output (rc={rc}).\n```\n{tail[-1500:]}\n```")
 
-    logs      = data.get("logs", [])
-    ok_flag   = data.get("ok", False)
-    err_msg   = data.get("err")
+    logs    = data.get("logs", [])
+    ok_flag = data.get("ok", False)
+    err_msg = data.get("err")
 
-    # Đếm log types
     counts = defaultdict(int)
     for e in logs:
         counts[e.get("kind", "?")] += 1
@@ -195,9 +215,9 @@ async def cmd_run(ctx: commands.Context, *, args: str = ""):
         color=0x57F287 if ok_flag else 0xED4245,
         timestamp=datetime.now(timezone.utc),
     )
-    embed.add_field(name="Input", value=f"`{stem}` · {len(src)} B", inline=True)
+    embed.add_field(name="Input",  value=f"`{stem}` · {len(src)} B", inline=True)
     embed.add_field(name="Status", value="✅ ok" if ok_flag else "❌ error", inline=True)
-    embed.add_field(name="Logs", value=str(len(logs)), inline=True)
+    embed.add_field(name="Logs",   value=str(len(logs)), inline=True)
 
     if counts:
         summary = " · ".join(f"{k}×{v}" for k, v in sorted(counts.items()))
@@ -212,14 +232,18 @@ async def cmd_run(ctx: commands.Context, *, args: str = ""):
 
     log_text = format_logs(logs)
     if log_text and log_text != "(no logs)":
-        # chia thành nhiều field nếu dài
         chunks = [log_text[i:i+1000] for i in range(0, min(len(log_text), 5000), 1000)]
         for i, chunk in enumerate(chunks[:5]):
-            embed.add_field(name=f"Log {'(cont.)' if i else ''}", value=f"```\n{chunk}\n```", inline=False)
+            embed.add_field(
+                name=f"Log {'(cont.)' if i else ''}",
+                value=f"```\n{chunk}\n```",
+                inline=False,
+            )
 
     # File log đầy đủ
     files = []
     full = json.dumps(data, indent=2, ensure_ascii=False)
+    log_file = None
     if len(full) > 3000:
         log_file = WORK / f"{session}.log.json"
         log_file.write_text(full, encoding="utf-8")
@@ -228,13 +252,11 @@ async def cmd_run(ctx: commands.Context, *, args: str = ""):
     try:
         await status.edit(content="", embed=embed, attachments=files)
     except discord.HTTPException:
-        # fallback text
         await status.edit(content=f"Result:\n```\n{log_text[:1800]}\n```")
 
-    # cleanup file log
-    for f in files:
+    if log_file:
         try:
-            Path(f.fp.name).unlink(missing_ok=True)
+            log_file.unlink(missing_ok=True)
         except Exception:
             pass
 
@@ -243,12 +265,41 @@ async def cmd_run(ctx: commands.Context, *, args: str = ""):
 async def cmd_ping(ctx):
     await ctx.reply(f"pong 🏓 `{round(bot.latency * 1000)}ms`")
 
+
+HELP = """```
+!run <file>              — chạy file Lua đính kèm
+!run (reply file/code)   — chạy file/code được reply
+!run ```lua ...```        — chạy code block
+!ping                    — kiểm tra bot
+
+Hook tự động:
+  🖨  print / warn
+  📦  loadstring / load   (log cả code bên trong)
+  🌐  getfenv / setfenv
+  🌍  game:HttpGet / HttpGetAsync / request
+  🔧  game:GetService / FindService
+  💾  writefile / readfile / loadfile
+  🚀  queue_on_teleport
+  📎  require
+  🎨  Drawing.new
+```"""
+
+
+@bot.event
+async def on_command_error(ctx, err):
+    if isinstance(err, commands.CommandNotFound):
+        return
+    await ctx.reply(f"❌ `{type(err).__name__}`: {err}")
+
+
 # ====================== FLASK (keep-alive) ======================
 app = Flask(__name__)
+
 
 @app.route("/")
 def home():
     return "Bot is alive!", 200
+
 
 @app.route("/health")
 def health():
@@ -259,6 +310,7 @@ def health():
         "hook": HOOK,
     }, 200
 
+
 def run_flask():
     app.run(host="0.0.0.0", port=PORT, debug=False, use_reloader=False)
 
@@ -268,9 +320,7 @@ if __name__ == "__main__":
     if not TOKEN:
         raise SystemExit("Missing DISCORD_TOKEN env var")
 
-    # Flask trong thread riêng (daemon) → không block bot
     threading.Thread(target=run_flask, daemon=True).start()
     print(f"[FLASK] Thread started on port {PORT}")
 
-    # Bot chạy ở main thread
     bot.run(TOKEN)
